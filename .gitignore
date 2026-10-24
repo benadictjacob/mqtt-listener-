@@ -1,0 +1,8 @@
+.env
+captures/
+mosquitto-data/
+certs/
+*.key
+*.pem
+__pycache__/
+*.py[cod]
