@@ -1,0 +1,13 @@
+# Plain-HTTP site: the built frontend plus a /api proxy. Used locally and to
+# bootstrap the first certificate (the ACME challenge is answered here too).
+server {
+    listen 80;
+    server_name _;
+    root /usr/share/nginx/html;
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    include /etc/nginx/conf.d/app.locations;
+}

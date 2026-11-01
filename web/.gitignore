@@ -1,1 +1,3 @@
 dist/
+letsencrypt/
+certbot-www/
