@@ -175,7 +175,9 @@ async function login(req) {
   const body = await readBody(req);
   const email = String(body.email || '').trim().toLowerCase();
   const password = String(body.password || '');
-  const key = `${email}|${req.socket.remoteAddress}`;
+  // Behind the web proxy every socket is nginx; it passes the visitor in X-Real-IP.
+  // Safe to trust because the API port is only published on 127.0.0.1.
+  const key = `${email}|${req.headers['x-real-ip'] || req.socket.remoteAddress}`;
   checkThrottle(key);
   const [user] = await query('select * from app_users where email=$1', [email]);
   if (!user || !(await bcrypt.compare(password, user.password_hash))) {
