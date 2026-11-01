@@ -37,5 +37,7 @@ chmod 600 /mosquitto/data/passwords
   printf 'user %s\ntopic read #\n' "$MQTT_CAPTURE_USERNAME"
 } > /mosquitto/data/acl
 chmod 600 /mosquitto/data/acl
+# Mosquitto drops root and runs as the mosquitto user, so it must own these files.
+chown mosquitto:mosquitto /mosquitto/data/passwords /mosquitto/data/acl
 
 exec mosquitto -c /mosquitto/config/mosquitto.conf

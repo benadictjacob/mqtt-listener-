@@ -15,6 +15,7 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 import paho.mqtt.client as mqtt
+import psycopg
 
 
 BROKER_HOST = os.environ.get("MQTT_BROKER_HOST", "broker")
@@ -23,6 +24,7 @@ USERNAME = os.environ["MQTT_CAPTURE_USERNAME"]
 PASSWORD = os.environ["MQTT_CAPTURE_PASSWORD"]
 CAPTURE_FILE = Path(os.environ.get("CAPTURE_FILE", "/app/captures/messages.jsonl"))
 MAX_PREVIEW_BYTES = 512
+DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://bms:bms-local-pass@postgres:5432/bms")
 
 CAPTURE_FILE.parent.mkdir(parents=True, exist_ok=True)
 handler = RotatingFileHandler(
@@ -89,6 +91,24 @@ def on_message(client: mqtt.Client, userdata: object, message: mqtt.MQTTMessage)
     if text_preview is not None:
         record["payload_text_preview"] = text_preview
     logger.info(json.dumps(record, ensure_ascii=True, separators=(",", ":")))
+    # Demo envelope only. Real vendor packets require their confirmed decoder.
+    try:
+        envelope = json.loads(payload.decode("utf-8"))
+        if envelope.get("test_only") and envelope.get("imei"):
+            metrics = envelope.get("telemetry", {})
+            received = datetime.now(timezone.utc)
+            with psycopg.connect(DATABASE_URL) as conn:
+                row = conn.execute("select id from devices where imei=%s", (str(envelope["imei"]),)).fetchone()
+                if not row:
+                    logger.warning(json.dumps({"event":"unknown_imei","imei":str(envelope["imei"])}))
+                    return
+                conn.execute("""insert into device_current_data(device_id,received_at,voltage,current,power,soc,soh,temperature,status,raw_data)
+                    values(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) on conflict(device_id) do update set received_at=excluded.received_at,voltage=excluded.voltage,current=excluded.current,power=excluded.power,soc=excluded.soc,soh=excluded.soh,temperature=excluded.temperature,status=excluded.status,raw_data=excluded.raw_data""",
+                    (row[0],received,metrics.get("voltage"),metrics.get("current"),metrics.get("power"),metrics.get("soc"),metrics.get("soh"),metrics.get("temperature"),"Normal",json.dumps(envelope)))
+                conn.execute("insert into telemetry_history(device_id,received_at,payload) values(%s,%s,%s)",(row[0],received,json.dumps(envelope)))
+                conn.execute("update devices set last_seen_at=%s where id=%s",(received,row[0]))
+    except (UnicodeDecodeError, json.JSONDecodeError, KeyError):
+        pass
 
 
 def main() -> None:

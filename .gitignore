@@ -6,3 +6,5 @@ certs/
 *.pem
 __pycache__/
 *.py[cod]
+postgres-data/
+node_modules/
