@@ -4,23 +4,34 @@ Publishes the synthetic `test_only` JSON envelope (the format the capture worker
 stores in Postgres) every few seconds, with readings that drift slightly each
 time. It stands in for an LTE module until the real packet decoder exists.
 
-Usage: python simulate_device.py <imei> [interval_seconds]
+Inside the capture container the broker and login come from the environment:
+    python simulate_device.py <imei> [interval_seconds]
+
+From any other machine, point it at a broker with an env file holding
+MQTT_BROKER_HOST, MQTT_BROKER_PORT, MQTT_USERNAME and MQTT_PASSWORD:
+    python simulate_device.py <imei> [interval_seconds] --env-file .env.live
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import random
 import signal
-import sys
 import time
+from pathlib import Path
 
 import paho.mqtt.client as mqtt
 
 
-BROKER_HOST = os.environ.get("MQTT_BROKER_HOST", "broker")
-BROKER_PORT = int(os.environ.get("MQTT_BROKER_PORT", "1883"))
+def load_env_file(path: Path) -> None:
+    """Fill os.environ from KEY=VALUE lines; real environment variables win."""
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line and not line.startswith("#") and "=" in line:
+            key, value = line.split("=", 1)
+            os.environ.setdefault(key.strip(), value.strip())
 
 
 def clamp(value: float, low: float, high: float) -> float:
@@ -28,19 +39,35 @@ def clamp(value: float, low: float, high: float) -> float:
 
 
 def main() -> None:
-    if len(sys.argv) < 2 or not sys.argv[1].isdigit() or len(sys.argv[1]) != 15:
-        sys.exit("usage: simulate_device.py <15-digit imei> [interval_seconds]")
-    imei = sys.argv[1]
-    interval = float(sys.argv[2]) if len(sys.argv) > 2 else 3.0
+    parser = argparse.ArgumentParser(description="Simulate one battery reporting over MQTT.")
+    parser.add_argument("imei", help="15-digit IMEI of a device registered in the app")
+    parser.add_argument("interval", nargs="?", type=float, default=3.0, help="seconds between messages")
+    parser.add_argument("--env-file", type=Path, help="file with broker host, port and login")
+    args = parser.parse_args()
+    if not (args.imei.isdigit() and len(args.imei) == 15):
+        parser.error("imei must be exactly 15 digits")
+    if args.env_file:
+        load_env_file(args.env_file)
+    imei, interval = args.imei, args.interval
+    host = os.environ.get("MQTT_BROKER_HOST", "broker")
+    port = int(os.environ.get("MQTT_BROKER_PORT", "1883"))
 
     client = mqtt.Client(
         callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
         client_id=f"simulator-{imei}",
         protocol=mqtt.MQTTv311,
     )
+
+    def on_connect(_client: mqtt.Client, _userdata: object, _flags: object, reason_code: object, _props: object) -> None:
+        if reason_code.is_failure:
+            print(f"broker {host}:{port} refused the connection: {reason_code}", flush=True)
+        else:
+            print(f"connected to {host}:{port}", flush=True)
+
+    client.on_connect = on_connect
     client.username_pw_set(os.environ["MQTT_USERNAME"], os.environ["MQTT_PASSWORD"])
     client.reconnect_delay_set(min_delay=1, max_delay=30)
-    client.connect(BROKER_HOST, BROKER_PORT, keepalive=60)
+    client.connect(host, port, keepalive=60)
     client.loop_start()
 
     running = True

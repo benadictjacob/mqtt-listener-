@@ -8,3 +8,4 @@ __pycache__/
 *.py[cod]
 postgres-data/
 node_modules/
+.env.live
